@@ -1,0 +1,9 @@
+#define MQTT_HOSTNAME  "127.0.0.1"
+#define MQTT_CLIENT_ID "identifier for this particular client"
+#define MQTT_USERNAME  "vhost:username"
+#define MQTT_PASSWORD  "password"
+#define MQTT_TOPIC_SUB "switches.commands"
+#define MQTT_TOPIC_PUB "switches.status"
+
+#define WIFI_SSID "WIFI"
+#define WIFI_PASS "PASS"
