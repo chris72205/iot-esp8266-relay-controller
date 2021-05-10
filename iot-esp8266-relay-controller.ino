@@ -2,6 +2,8 @@
 #include <PubSubClient.h>
 #include <ESP8266WiFi.h>
 
+#include "Relay.h"
+
 #include "Sensitive.h"
 
 // Wifi
@@ -23,16 +25,16 @@ const int relayPin = 14;
 
 // States
 bool switchState;
-bool relayState;
-unsigned long lastRelayChange;
 
 // Start time
 unsigned long startTime;
 unsigned long statusLastSentAt;
 
 // Important times
-const unsigned int debouncePeriod = 2000; // Period of time (in ms) that we must wait before toggling relay
 const unsigned int publishInterval = 5000; // Interval in which we should publish relay status
+
+// Relay manager
+Relay relay(relayPin);
 
 /*
  * ---------------------------------------------
@@ -50,6 +52,9 @@ void ensureWifiConnection() {
   WiFi.begin(wifiSsid, wifiPass);
   while(WiFi.status() != WL_CONNECTED) {
     Serial.print(".");
+
+    // ensure we're still checking switch state even if we're not connected to WiFi
+    checkSwitchState();
     delay(500);
   }
 
@@ -85,7 +90,14 @@ void ensureMqttConnection() {
       Serial.println("subscribed!");
     } else {
       Serial.print(".");
-      delay(5000);
+
+      // ensure we're still responding to switch changes even if we're not connected
+      // to MQTT (wait five seconds while checking switch state every ~500ms)
+      for(int i = 0; i < 10; i++){
+        checkSwitchState();
+        
+        delay(500); 
+      }
     }
   }
 }
@@ -128,8 +140,12 @@ void publishDeviceInfo() {
   * Report relay state as needed and record when it was last reported
   */
 void reportRelayState() {
+  if(WiFi.status() != WL_CONNECTED || !mqttClient.connected()) {
+    return;
+  }
+
   // todo(chrisjacob): improve payload of this message
-  mqttClient.publish(mqttPubTopic, relayState ? "relay on" : "relay off");
+  mqttClient.publish(mqttPubTopic, relay.getState() ? "relay on" : "relay off");
 
   statusLastSentAt = millis();
 }
@@ -163,36 +179,6 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 /**
- * Toggle the relay state if certain conditions are met
- * 
- * Must be outside of the debounce period since the relay
- * state last changed
- */
-void toggleRelay() {
-  unsigned long currentMillis = millis();
-
-  if(currentMillis < lastRelayChange && currentMillis > debouncePeriod) {
-    // we have rolled over and current time is outside of debouncePeriod, so we can do this
-    relayState = !relayState;
-    lastRelayChange = currentMillis;
-  } else if(currentMillis > (lastRelayChange + debouncePeriod)) {
-    // current time is more than the debounce period since the last relay change
-    relayState = !relayState;
-    lastRelayChange = currentMillis;
-  }
-
-  // do nothing, since we are within the debounce period
-}
-
-/**
- * Update relay pin based on relayState
- */
-void updateRelay() {
-  Serial.println("Updating relay state");
-  digitalWrite(relayPin, relayState ? HIGH : LOW);
-}
-
-/**
  * Publish current relay state if needed
  * 
  * Publishes state if it's been {publishInterval} since the last
@@ -204,6 +190,26 @@ void publishStateIfNeeded() {
   // currentTime > 5 seconds ago || millis() < statusLastSentAt (for millis() wrapping) && currentMillis >= 5 seconds
   if(currentMillis >= (statusLastSentAt + publishInterval) || (currentMillis < statusLastSentAt && currentMillis >= publishInterval)) {
     Serial.println("Reporting relay state");
+    reportRelayState();
+  }
+}
+
+/**
+ * Check if switch state has changed and update relay + report status if so
+ */
+void checkSwitchState() {
+  // check if switch state has changed
+  if(hasSwitchStateChanged(digitalRead(switchPin))) {
+    Serial.print("Switch state has changed: ");
+    Serial.println(digitalRead(switchPin));
+
+    // set current state as switchState
+    switchState = digitalRead(switchPin);
+    
+    // change the relay to opposite of it's current state
+    relay.toggleState();
+    
+    // publish to topic that we are changing the state
     reportRelayState();
   }
 }
@@ -220,12 +226,11 @@ void setup() {
   
   // read initial switch(es) state
   switchState = digitalRead(switchPin);
-  relayState = false;
   Serial.print("switchState is: ");
   Serial.println(switchState);
 
   // update relay to reflect initial state
-  updateRelay();
+  relay.setState(false);
   
   // connect to wifi
   ensureWifiConnection();
@@ -246,16 +251,7 @@ void loop() {
   mqttClient.loop();
 
   // check if switch state has changed
-  if(hasSwitchStateChanged(digitalRead(switchPin))) {
-    Serial.println("Switch state has changed");
-    
-    // change the relay to opposite of it's current state
-    toggleRelay();
-    updateRelay();
-    
-    // publish to topic that we are changing the state
-    reportRelayState();
-  }
+  checkSwitchState();
 
   // publish status depending on time elapsed
   publishStateIfNeeded();
