@@ -6,6 +6,9 @@
 
 #include "Sensitive.h"
 
+// Version (used for parsing messages)
+const char* CURRENT_VERSION = "0.0.1";
+
 // Wifi
 const char* wifiSsid = WIFI_SSID;
 const char* wifiPass = WIFI_PASS;
@@ -113,9 +116,10 @@ void publishDeviceInfo() {
   String macAddress = WiFi.macAddress();
   String localIP = WiFi.localIP().toString();
 
-  doc["clientId"] = mqttClientId;
-  doc["macAddress"] = macAddress;
-  doc["ipAddress"] = localIP;
+  doc["cid"] = mqttClientId;
+  doc["mac"] = macAddress;
+  doc["ip"] = localIP;
+  doc["v"] = CURRENT_VERSION;
 
   String payload;
   const unsigned int jsonSize = serializeJson(doc, payload);
@@ -123,7 +127,6 @@ void publishDeviceInfo() {
   char mqttPayload[jsonSize + 4];
 
   payload.toCharArray(mqttPayload, jsonSize + 4);
-  
 
   mqttClient.publish(pubTopic, mqttPayload);
 }
@@ -144,8 +147,18 @@ void reportRelayState() {
     return;
   }
 
-  // todo(chrisjacob): improve payload of this message
-  mqttClient.publish(mqttPubTopic, relay.getState() ? "relay on" : "relay off");
+  DynamicJsonDocument doc(128);
+
+  doc["cid"] = mqttClientId;
+  doc["v"] = CURRENT_VERSION;
+  doc["s"] = relay.getState() ? "on" : "off";
+
+  String payload;
+  const unsigned int jsonSize = serializeJson(doc, payload);
+  char mqttPayload[jsonSize + 4];
+  payload.toCharArray(mqttPayload, jsonSize + 4);
+  
+  mqttClient.publish(mqttPubTopic, mqttPayload);
 
   statusLastSentAt = millis();
 }
